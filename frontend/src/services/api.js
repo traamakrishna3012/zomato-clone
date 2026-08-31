@@ -1,13 +1,12 @@
 import axios from 'axios'
 
 const api = axios.create({
-  baseURL: 'http://localhost:8000/api',
+  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api',
   headers: {
     'Content-Type': 'application/json',
   },
 })
 
-// Attach JWT token to every outgoing request
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('access_token')
   if (token) {
@@ -16,7 +15,6 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-// Handle 401 responses by clearing stale tokens
 api.interceptors.response.use(
   (response) => response,
   (error) => {

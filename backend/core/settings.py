@@ -12,7 +12,11 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-dev-key-change-in-producti
 
 DEBUG = os.getenv('DEBUG', 'True').lower() in ('true', '1', 'yes')
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'testserver']
+allowed_hosts_env = os.getenv('ALLOWED_HOSTS', '')
+if allowed_hosts_env:
+    ALLOWED_HOSTS = [host.strip() for host in allowed_hosts_env.split(',') if host.strip()]
+else:
+    ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'testserver']
 
 
 # Application definition
@@ -64,8 +68,8 @@ TEMPLATES = [
 WSGI_APPLICATION = 'core.wsgi.application'
 
 
-# Database — Supabase PostgreSQL via DATABASE_URL
-# Falls back to SQLite for local dev if DATABASE_URL is not set
+# Database
+# Connects to Supabase / PostgreSQL if DATABASE_URL is set, otherwise defaults to local SQLite
 
 DATABASES = {
     'default': dj_database_url.config(
@@ -79,7 +83,6 @@ AUTH_USER_MODEL = 'api.User'
 
 
 # Password validation
-
 
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
@@ -123,14 +126,14 @@ REST_FRAMEWORK = {
 
 SPECTACULAR_SETTINGS = {
     'TITLE': 'Zomato Clone API',
-    'DESCRIPTION': 'Interactive Swagger API documentation for Zomato Clone food delivery platform.',
+    'DESCRIPTION': 'OpenAPI documentation for Zomato Clone food ordering platform.',
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
     'COMPONENT_SPLIT_REQUEST': True,
 }
 
 
-# SimpleJWT — 7 day access, 30 day refresh
+# JWT Token Lifetimes
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(days=7),
@@ -140,9 +143,13 @@ SIMPLE_JWT = {
 }
 
 
-# CORS — allow Vue dev server
+# CORS Configuration
 
-CORS_ALLOWED_ORIGINS = [
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
-]
+cors_env = os.getenv('CORS_ALLOWED_ORIGINS', '')
+if cors_env:
+    CORS_ALLOWED_ORIGINS = [origin.strip() for origin in cors_env.split(',') if origin.strip()]
+else:
+    CORS_ALLOWED_ORIGINS = [
+        'http://localhost:5173',
+        'http://127.0.0.1:5173',
+    ]
