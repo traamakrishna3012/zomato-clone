@@ -3,7 +3,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 from rest_framework import status
 
-from .models import User, OTPVerification, Restaurant, MenuItem, Cart, Order, OrderItem, Review, Coupon
+from .models import User, OTPVerification, Restaurant, MenuItem, Cart, Coupon
 
 
 class AuthenticationTests(TestCase):
@@ -18,10 +18,8 @@ class AuthenticationTests(TestCase):
         self.assertTrue(OTPVerification.objects.filter(mobile='9876543210').exists())
 
     def test_verify_otp_and_login(self):
-        # Request OTP first
         self.client.post('/api/auth/send-otp/', {'mobile': '9876543210'}, format='json')
 
-        # Verify OTP
         response = self.client.post('/api/auth/verify-otp/', {
             'mobile': '9876543210',
             'otp': '123456',
@@ -33,7 +31,6 @@ class AuthenticationTests(TestCase):
         self.assertIn('refresh', response.data)
         self.assertEqual(response.data['user']['full_name'], 'Rahul Verma')
 
-        # Check DB user
         user = User.objects.get(mobile='9876543210')
         self.assertEqual(user.full_name, 'Rahul Verma')
 
@@ -42,7 +39,7 @@ class RestaurantFilterAndSearchTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.r1 = Restaurant.objects.create(
-            name="Spice Villa",
+            name="Nafees Restaurant",
             cuisine="North Indian",
             rating=Decimal("4.5"),
             avg_cost_for_two=600,
@@ -52,7 +49,7 @@ class RestaurantFilterAndSearchTests(TestCase):
             delivery_time=25
         )
         self.r2 = Restaurant.objects.create(
-            name="Green Leaf Pure Veg",
+            name="Guru Kripa Restaurant",
             cuisine="South Indian",
             rating=Decimal("4.8"),
             avg_cost_for_two=350,
@@ -82,28 +79,28 @@ class RestaurantFilterAndSearchTests(TestCase):
     def test_filter_by_city(self):
         response = self.client.get('/api/restaurants/?city=Indore')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        names = [r['name'] for r in response.data['results']]
-        self.assertIn("Spice Villa", names)
-        self.assertIn("Green Leaf Pure Veg", names)
-        self.assertNotIn("Mumbai Express", names)
+        restaurant_names = [item['name'] for item in response.data['results']]
+        self.assertIn("Nafees Restaurant", restaurant_names)
+        self.assertIn("Guru Kripa Restaurant", restaurant_names)
+        self.assertNotIn("Mumbai Express", restaurant_names)
 
     def test_filter_by_pure_veg(self):
         response = self.client.get('/api/restaurants/?is_pure_veg=true')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        for r in response.data['results']:
-            self.assertTrue(r['is_pure_veg'])
+        for restaurant in response.data['results']:
+            self.assertTrue(restaurant['is_pure_veg'])
 
     def test_filter_by_min_rating(self):
         response = self.client.get('/api/restaurants/?min_rating=4.0')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        for r in response.data['results']:
-            self.assertGreaterEqual(float(r['rating']), 4.0)
+        for restaurant in response.data['results']:
+            self.assertGreaterEqual(float(restaurant['rating']), 4.0)
 
     def test_search_by_menu_item_title(self):
         response = self.client.get('/api/restaurants/?search=Butter Chicken')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data['results']), 1)
-        self.assertEqual(response.data['results'][0]['name'], "Spice Villa")
+        self.assertEqual(response.data['results'][0]['name'], "Nafees Restaurant")
 
 
 class CartAndOrderTests(TestCase):
@@ -147,14 +144,12 @@ class CartAndOrderTests(TestCase):
         )
 
     def test_add_to_cart_and_calculate_summary(self):
-        # Add item1 x 2
         response = self.client.post('/api/cart/', {
             'menu_item_id': self.item1.id,
             'quantity': 2
         }, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
-        # Check summary
         summary = self.client.get('/api/cart/summary/')
         self.assertEqual(summary.status_code, status.HTTP_200_OK)
         self.assertEqual(summary.data['item_count'], 2)
@@ -164,15 +159,12 @@ class CartAndOrderTests(TestCase):
         self.assertEqual(summary.data['grand_total'], 628.0)
 
     def test_cross_restaurant_conflict(self):
-        # Add from r1
         self.client.post('/api/cart/', {'menu_item_id': self.item1.id, 'quantity': 1}, format='json')
 
-        # Try adding from r2 without clear flag -> 409 Conflict
         response = self.client.post('/api/cart/', {'menu_item_id': self.item2.id, 'quantity': 1}, format='json')
         self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
         self.assertTrue(response.data['conflict'])
 
-        # Now add with clear_existing=True -> succeeds
         response = self.client.post('/api/cart/', {
             'menu_item_id': self.item2.id,
             'quantity': 1,
@@ -183,14 +175,12 @@ class CartAndOrderTests(TestCase):
         self.assertEqual(Cart.objects.filter(user=self.user).first().restaurant, self.r2)
 
     def test_apply_coupon_validation(self):
-        # Below min order amount
         res_fail = self.client.post('/api/coupons/apply/', {
             'code': 'SAVE50',
             'item_total': 150.00
         }, format='json')
         self.assertEqual(res_fail.status_code, status.HTTP_400_BAD_REQUEST)
 
-        # Valid order amount -> applies max 100 cap
         res_success = self.client.post('/api/coupons/apply/', {
             'code': 'SAVE50',
             'item_total': 280.00
@@ -199,10 +189,8 @@ class CartAndOrderTests(TestCase):
         self.assertEqual(res_success.data['discount_amount'], 100.0)
 
     def test_place_order_with_coupon_and_razorpay_flow(self):
-        # Add item to cart
         self.client.post('/api/cart/', {'menu_item_id': self.item1.id, 'quantity': 1}, format='json')
 
-        # Place order with coupon & Razorpay payment mode
         response = self.client.post('/api/orders/', {
             'delivery_address': 'Flat 101, Green Meadows, Indore',
             'payment_mode': 'Razorpay',
@@ -212,18 +200,15 @@ class CartAndOrderTests(TestCase):
         order_id = response.data['id']
         self.assertEqual(response.data['order_status'], 'PLACED')
         self.assertEqual(response.data['coupon_code'], 'SAVE50')
-        # Subtotal: 280, Tax: 14, Fee: 40 = 334. Discount: 100 -> Grand Total = 234.00
         self.assertEqual(response.data['grand_total'], '234.00')
         self.assertEqual(response.data['payment_status'], 'PENDING')
 
-        # Create Razorpay test order
         rzp_order_resp = self.client.post('/api/payments/create-razorpay-order/', {
             'order_id': order_id
         }, format='json')
         self.assertEqual(rzp_order_resp.status_code, status.HTTP_200_OK)
-        self.assertEqual(rzp_order_resp.data['amount'], 23400) # in paise
+        self.assertEqual(rzp_order_resp.data['amount'], 23400)
 
-        # Verify Razorpay test payment
         verify_resp = self.client.post('/api/payments/verify-razorpay-payment/', {
             'order_id': order_id,
             'razorpay_payment_id': 'pay_test_999888777',

@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
-from .models import User, OTPVerification, Restaurant, MenuItem, Cart, Order, OrderItem, Review
+from .models import User, OTPVerification, Restaurant, MenuItem, Cart, Order, OrderItem, Review, Coupon
 
 
 @admin.register(User)
@@ -14,7 +14,7 @@ class UserAdmin(BaseUserAdmin):
         (None, {'fields': ('mobile', 'password')}),
         ('Personal info', {'fields': ('full_name', 'email', 'default_address')}),
         ('Permissions', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
-        ('Important dates', {'fields': ('last_login', 'created_at', 'updated_at')}),
+        ('Dates', {'fields': ('last_login', 'created_at', 'updated_at')}),
     )
     readonly_fields = ('created_at', 'updated_at', 'last_login')
 
@@ -78,3 +78,10 @@ class ReviewAdmin(admin.ModelAdmin):
     list_display = ('restaurant', 'user', 'rating', 'created_at')
     list_filter = ('rating', 'created_at')
     search_fields = ('restaurant__name', 'user__mobile', 'comment')
+
+
+@admin.register(Coupon)
+class CouponAdmin(admin.ModelAdmin):
+    list_display = ('code', 'discount_type', 'discount_value', 'min_order_amount', 'max_discount', 'is_active')
+    list_filter = ('discount_type', 'is_active')
+    search_fields = ('code', 'description')

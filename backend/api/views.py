@@ -10,17 +10,16 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework_simplejwt.tokens import RefreshToken
-from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiTypes
+from drf_spectacular.utils import extend_schema, extend_schema_view
 
 from .models import User, OTPVerification, Restaurant, MenuItem, Cart, Order, OrderItem, Review, Coupon
-from .filters import RestaurantFilter, MenuItemFilter
+from .filters import RestaurantFilter
 from .serializers import (
     UserSerializer,
     OTPRequestSerializer,
     OTPVerifySerializer,
     RestaurantListSerializer,
     RestaurantDetailSerializer,
-    MenuItemSerializer,
     CartItemSerializer,
     AddToCartSerializer,
     OrderSerializer,
@@ -65,7 +64,7 @@ class VerifyOTPView(APIView):
         serializer.is_valid(raise_exception=True)
         mobile = serializer.validated_data['mobile']
         otp = serializer.validated_data['otp']
-        name = serializer.validated_data.get('name', '').strip()
+        full_name = serializer.validated_data.get('name', '').strip()
 
         otp_record = OTPVerification.objects.filter(
             mobile=mobile,
@@ -84,11 +83,11 @@ class VerifyOTPView(APIView):
 
         user, created = User.objects.get_or_create(
             mobile=mobile,
-            defaults={"full_name": name}
+            defaults={"full_name": full_name}
         )
 
-        if name and not user.full_name:
-            user.full_name = name
+        if full_name and not user.full_name:
+            user.full_name = full_name
             user.save(update_fields=['full_name'])
 
         refresh = RefreshToken.for_user(user)
@@ -154,7 +153,7 @@ class CouponViewSet(viewsets.ReadOnlyModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         code = serializer.validated_data['code'].strip().upper()
-        item_total = serializer.validated_data['item_total']
+        subtotal = serializer.validated_data['item_total']
 
         try:
             coupon = Coupon.objects.get(code=code, is_active=True)
@@ -164,13 +163,13 @@ class CouponViewSet(viewsets.ReadOnlyModelViewSet):
                 "detail": f"Coupon code '{code}' is invalid or expired."
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        if item_total < coupon.min_order_amount:
+        if subtotal < coupon.min_order_amount:
             return Response({
                 "valid": False,
                 "detail": f"Coupon '{code}' requires a minimum order amount of ₹{coupon.min_order_amount:.0f}."
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        discount = coupon.calculate_discount(item_total)
+        discount = coupon.calculate_discount(subtotal)
 
         return Response({
             "valid": True,
@@ -205,19 +204,20 @@ class CartViewSet(viewsets.ModelViewSet):
         clear_existing = serializer.validated_data['clear_existing']
         target_restaurant = menu_item.restaurant
 
+        # Enforce single restaurant per order
         existing_cart_items = Cart.objects.filter(user=request.user).select_related('restaurant')
-        first_item = existing_cart_items.first()
+        first_cart_item = existing_cart_items.first()
 
-        if first_item and first_item.restaurant_id != target_restaurant.id:
+        if first_cart_item and first_cart_item.restaurant_id != target_restaurant.id:
             if clear_existing:
                 existing_cart_items.delete()
             else:
                 return Response({
                     "conflict": True,
-                    "existing_restaurant_id": first_item.restaurant_id,
-                    "existing_restaurant_name": first_item.restaurant.name,
+                    "existing_restaurant_id": first_cart_item.restaurant_id,
+                    "existing_restaurant_name": first_cart_item.restaurant.name,
                     "target_restaurant_name": target_restaurant.name,
-                    "detail": f"Your cart contains items from {first_item.restaurant.name}. Reset cart to add items from {target_restaurant.name}?",
+                    "detail": f"Your cart contains items from {first_cart_item.restaurant.name}. Reset cart to add items from {target_restaurant.name}?",
                 }, status=status.HTTP_409_CONFLICT)
 
         cart_item, created = Cart.objects.get_or_create(
@@ -233,9 +233,9 @@ class CartViewSet(viewsets.ModelViewSet):
             cart_item.quantity += quantity
             cart_item.save(update_fields=['quantity', 'updated_at'])
 
-        all_items = self.get_queryset()
+        cart_items = self.get_queryset()
         return Response(
-            CartItemSerializer(all_items, many=True).data,
+            CartItemSerializer(cart_items, many=True).data,
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK
         )
 
@@ -276,16 +276,17 @@ class CartViewSet(viewsets.ModelViewSet):
                 "items": [],
             })
 
-        item_total = sum(Decimal(str(item.menu_item.price)) * item.quantity for item in cart_items)
-        taxes = round(item_total * Decimal('0.05'), 2)
+        # Bill breakdown: 5% GST and flat ₹40 delivery fee
+        subtotal = sum(Decimal(str(item.menu_item.price)) * item.quantity for item in cart_items)
+        taxes = round(subtotal * Decimal('0.05'), 2)
         delivery_fee = Decimal('40.00')
-        grand_total = item_total + taxes + delivery_fee
+        grand_total = subtotal + taxes + delivery_fee
         item_count = sum(item.quantity for item in cart_items)
         first_item = cart_items.first()
 
         return Response({
             "item_count": item_count,
-            "item_total": float(item_total),
+            "item_total": float(subtotal),
             "taxes": float(taxes),
             "delivery_fee": float(delivery_fee),
             "grand_total": float(grand_total),
@@ -318,28 +319,29 @@ class OrderViewSet(viewsets.ModelViewSet):
         delivery_address = serializer.validated_data['delivery_address'].strip()
         payment_mode = serializer.validated_data['payment_mode']
         coupon_code = serializer.validated_data.get('coupon_code', '').strip().upper()
-        items_data = serializer.validated_data.get('items', [])
+        custom_items_payload = serializer.validated_data.get('items', [])
 
         prepared_items = []
-        item_total = Decimal('0.00')
+        subtotal = Decimal('0.00')
 
-        if items_data:
-            menu_item_ids = [it['menu_item_id'] for it in items_data]
-            db_menu_items = {
-                mi.id: mi for mi in MenuItem.objects.filter(id__in=menu_item_ids).select_related('restaurant')
+        if custom_items_payload:
+            item_ids = [entry['menu_item_id'] for entry in custom_items_payload]
+            menu_items_map = {
+                item.id: item
+                for item in MenuItem.objects.filter(id__in=item_ids).select_related('restaurant')
             }
-            if not db_menu_items:
+            if not menu_items_map:
                 return Response({"detail": "Invalid menu items selected."}, status=status.HTTP_400_BAD_REQUEST)
 
-            first_mi = next(iter(db_menu_items.values()))
-            restaurant = first_mi.restaurant
+            first_item = next(iter(menu_items_map.values()))
+            restaurant = first_item.restaurant
 
-            for it in items_data:
-                mi = db_menu_items.get(it['menu_item_id'])
-                if mi:
-                    qty = it['quantity']
-                    prepared_items.append((mi, mi.title, mi.price, qty))
-                    item_total += Decimal(str(mi.price)) * qty
+            for entry in custom_items_payload:
+                menu_item = menu_items_map.get(entry['menu_item_id'])
+                if menu_item:
+                    quantity = entry['quantity']
+                    prepared_items.append((menu_item, menu_item.title, menu_item.price, quantity))
+                    subtotal += Decimal(str(menu_item.price)) * quantity
         else:
             cart_items = Cart.objects.filter(user=request.user).select_related('menu_item', 'restaurant')
             if not cart_items.exists():
@@ -349,12 +351,13 @@ class OrderViewSet(viewsets.ModelViewSet):
 
             restaurant = cart_items.first().restaurant
             prepared_items = [
-                (ci.menu_item, ci.menu_item.title, ci.menu_item.price, ci.quantity)
-                for ci in cart_items
+                (cart_item.menu_item, cart_item.menu_item.title, cart_item.menu_item.price, cart_item.quantity)
+                for cart_item in cart_items
             ]
-            item_total = sum(Decimal(str(ci.menu_item.price)) * ci.quantity for ci in cart_items)
+            subtotal = sum(Decimal(str(cart_item.menu_item.price)) * cart_item.quantity for cart_item in cart_items)
 
-        taxes = round(item_total * Decimal('0.05'), 2)
+        # Apply standard taxes & delivery
+        taxes = round(subtotal * Decimal('0.05'), 2)
         delivery_fee = Decimal('40.00')
 
         coupon = None
@@ -362,12 +365,12 @@ class OrderViewSet(viewsets.ModelViewSet):
         if coupon_code:
             try:
                 coupon = Coupon.objects.get(code=coupon_code, is_active=True)
-                if item_total >= coupon.min_order_amount:
-                    discount_amount = Decimal(str(coupon.calculate_discount(item_total)))
+                if subtotal >= coupon.min_order_amount:
+                    discount_amount = Decimal(str(coupon.calculate_discount(subtotal)))
             except Coupon.DoesNotExist:
                 pass
 
-        grand_total = max(Decimal('0.00'), (item_total + taxes + delivery_fee) - discount_amount)
+        grand_total = max(Decimal('0.00'), (subtotal + taxes + delivery_fee) - discount_amount)
 
         payment_status = 'PENDING'
         transaction_id = ''
@@ -389,7 +392,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             razorpay_order_id=razorpay_order_id,
             coupon=coupon,
             discount_amount=discount_amount,
-            item_total=item_total,
+            item_total=subtotal,
             taxes=taxes,
             delivery_fee=delivery_fee,
             grand_total=grand_total,
@@ -399,12 +402,12 @@ class OrderViewSet(viewsets.ModelViewSet):
         order_items = [
             OrderItem(
                 order=order,
-                menu_item=mi,
+                menu_item=menu_item,
                 item_title=title,
                 price=price,
-                quantity=qty
+                quantity=quantity
             )
-            for mi, title, price, qty in prepared_items
+            for menu_item, title, price, quantity in prepared_items
         ]
         OrderItem.objects.bulk_create(order_items)
 
@@ -439,13 +442,13 @@ class OrderViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='progress-status')
     def progress_status(self, request, pk=None):
         order = self.get_object()
-        flow = {
+        status_transitions = {
             'PLACED': 'PREPARING',
             'PREPARING': 'OUT_FOR_DELIVERY',
             'OUT_FOR_DELIVERY': 'DELIVERED',
         }
 
-        next_status = flow.get(order.order_status)
+        next_status = status_transitions.get(order.order_status)
         if not next_status:
             return Response({
                 "detail": f"Order is already in '{order.order_status}' status."

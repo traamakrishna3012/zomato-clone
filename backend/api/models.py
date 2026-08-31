@@ -1,3 +1,4 @@
+from decimal import Decimal
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
 from django.conf import settings
@@ -137,16 +138,17 @@ class Coupon(models.Model):
     def __str__(self):
         return self.code
 
-    def calculate_discount(self, amount):
-        if amount < self.min_order_amount:
-            return 0.00
+    def calculate_discount(self, subtotal):
+        if subtotal < self.min_order_amount:
+            return Decimal('0.00')
+
         if self.discount_type == 'PERCENT':
-            discount = (amount * self.discount_value) / 100
+            discount = (subtotal * self.discount_value) / Decimal('100.0')
             if self.max_discount:
                 discount = min(discount, self.max_discount)
             return round(discount, 2)
-        else:
-            return round(min(self.discount_value, amount), 2)
+
+        return round(min(self.discount_value, subtotal), 2)
 
 
 class Order(models.Model):

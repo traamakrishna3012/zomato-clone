@@ -1,9 +1,8 @@
-from decimal import Decimal
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field
 from drf_spectacular.types import OpenApiTypes
 
-from .models import User, OTPVerification, Restaurant, MenuItem, Cart, Order, OrderItem, Review, Coupon
+from .models import User, Restaurant, MenuItem, Cart, Order, OrderItem, Review, Coupon
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -17,10 +16,10 @@ class OTPRequestSerializer(serializers.Serializer):
     mobile = serializers.CharField(max_length=15)
 
     def validate_mobile(self, value):
-        cleaned = value.strip().replace(" ", "").replace("-", "")
-        if not cleaned.isdigit() or len(cleaned) < 10:
+        cleaned_mobile = value.strip().replace(" ", "").replace("-", "")
+        if not cleaned_mobile.isdigit() or len(cleaned_mobile) < 10:
             raise serializers.ValidationError("Please provide a valid 10-digit mobile number.")
-        return cleaned
+        return cleaned_mobile
 
 
 class OTPVerifySerializer(serializers.Serializer):
@@ -134,10 +133,10 @@ class AddToCartSerializer(serializers.Serializer):
 
     def validate_menu_item_id(self, value):
         try:
-            item = MenuItem.objects.select_related('restaurant').get(id=value)
-            if not item.is_available:
+            menu_item = MenuItem.objects.select_related('restaurant').get(id=value)
+            if not menu_item.is_available:
                 raise serializers.ValidationError("This menu item is currently unavailable.")
-            return item
+            return menu_item
         except MenuItem.DoesNotExist:
             raise serializers.ValidationError("Menu item not found.")
 

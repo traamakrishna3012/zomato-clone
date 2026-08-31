@@ -25,9 +25,11 @@ dist/
 .env.local
 .env.*.local
 
-# Editor & OS
+# Editor & Tools
 .vscode/
 .idea/
+.kilocode/
+.qodo/
 *.swp
 *.swo
 *~
