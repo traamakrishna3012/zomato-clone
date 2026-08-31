@@ -105,13 +105,13 @@ npm run dev
 ## Screenshots of the UI
 
 ### 1. Home Page & Restaurant Discovery
-![Home Page / Restaurant Listing](https://via.placeholder.com/1200x675.png?text=Home+Page+-+Restaurant+Listing)
+![Home Page / Restaurant Listing](./screenshots/home_page.png)
 
 ### 2. Menu Page & Cart Drawer
-![Menu & Cart Drawer](https://via.placeholder.com/1200x675.png?text=Restaurant+Menu+%26+Cart+Drawer)
+![Menu & Cart Drawer](./screenshots/menu_cart_drawer.png)
 
 ### 3. Checkout & Order Status Tracker
-![Checkout & Order Status Tracker](https://via.placeholder.com/1200x675.png?text=Checkout+%26+Order+Status+Tracker)
+![Checkout & Order Status Tracker](./screenshots/checkout_order_tracker.png)
 
 ---
 
