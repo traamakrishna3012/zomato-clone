@@ -1,7 +1,10 @@
 import uuid
+import secrets
+import logging
 from decimal import Decimal
-from django.db import transaction
-from django.db.models import Avg
+from django.db import transaction, models
+from django.db.models import Avg, F
+from django.conf import settings
 from rest_framework import status, viewsets, generics
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -31,6 +34,8 @@ from .serializers import (
     RazorpayVerifySerializer,
 )
 
+logger = logging.getLogger(__name__)
+
 
 @extend_schema(tags=['Authentication'])
 class SendOTPView(APIView):
@@ -40,7 +45,12 @@ class SendOTPView(APIView):
         serializer = OTPRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         mobile = serializer.validated_data['mobile']
-        otp = "123456"
+
+        # Invalidate any previous unverified codes for this mobile
+        OTPVerification.objects.filter(mobile=mobile, is_verified=False).delete()
+
+        # Generate a cryptographically secure 6-digit OTP
+        otp = f"{secrets.randbelow(900000) + 100000}"
 
         OTPVerification.objects.create(
             mobile=mobile,
@@ -48,11 +58,19 @@ class SendOTPView(APIView):
             is_verified=False
         )
 
-        return Response({
-            "message": "OTP sent successfully",
+        # In development/test mode, print to console for convenient verification
+        print(f"[AUTH OTP] Mobile: {mobile} | Code: {otp}")
+
+        response_payload = {
+            "message": "OTP sent successfully. Please check your SMS.",
             "mobile": mobile,
-            "otp": otp,
-        }, status=status.HTTP_200_OK)
+        }
+
+        # Include debug_otp in development/evaluation if DEBUG is True
+        if getattr(settings, 'DEBUG', False):
+            response_payload["debug_otp"] = otp
+
+        return Response(response_payload, status=status.HTTP_200_OK)
 
 
 @extend_schema(tags=['Authentication'])
@@ -72,16 +90,16 @@ class VerifyOTPView(APIView):
             is_verified=False
         ).order_by('-created_at').first()
 
-        if not otp_record and otp != "123456":
+        if not otp_record or otp_record.is_expired(expiry_minutes=5):
             return Response({
-                "detail": "Invalid or expired OTP. Please try again."
+                "detail": "Invalid or expired OTP. Please request a new code."
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        if otp_record:
-            otp_record.is_verified = True
-            otp_record.save(update_fields=['is_verified'])
+        # Mark OTP as consumed
+        otp_record.is_verified = True
+        otp_record.save(update_fields=['is_verified'])
 
-        user, created = User.objects.get_or_create(
+        user, is_new_user = User.objects.get_or_create(
             mobile=mobile,
             defaults={"full_name": full_name}
         )
@@ -96,7 +114,7 @@ class VerifyOTPView(APIView):
             "access": str(refresh.access_token),
             "refresh": str(refresh),
             "user": UserSerializer(user).data,
-            "is_new_user": created,
+            "is_new_user": is_new_user,
         }, status=status.HTTP_200_OK)
 
 
@@ -246,7 +264,11 @@ class CartViewSet(viewsets.ModelViewSet):
         if quantity is None:
             return Response({"detail": "Quantity is required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        quantity = int(quantity)
+        try:
+            quantity = int(quantity)
+        except (ValueError, TypeError):
+            return Response({"detail": "Quantity must be an integer."}, status=status.HTTP_400_BAD_REQUEST)
+
         if quantity <= 0:
             cart_item.delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
@@ -330,24 +352,35 @@ class OrderViewSet(viewsets.ModelViewSet):
                 item.id: item
                 for item in MenuItem.objects.filter(id__in=item_ids).select_related('restaurant')
             }
-            if not menu_items_map:
-                return Response({"detail": "Invalid menu items selected."}, status=status.HTTP_400_BAD_REQUEST)
+            if len(menu_items_map) != len(set(item_ids)):
+                return Response({"detail": "One or more selected menu items do not exist."}, status=status.HTTP_400_BAD_REQUEST)
+
+            restaurant_ids = {item.restaurant_id for item in menu_items_map.values()}
+            if len(restaurant_ids) > 1:
+                return Response({"detail": "All items in an order must belong to the same restaurant."}, status=status.HTTP_400_BAD_REQUEST)
 
             first_item = next(iter(menu_items_map.values()))
             restaurant = first_item.restaurant
 
             for entry in custom_items_payload:
                 menu_item = menu_items_map.get(entry['menu_item_id'])
-                if menu_item:
-                    quantity = entry['quantity']
-                    prepared_items.append((menu_item, menu_item.title, menu_item.price, quantity))
-                    subtotal += Decimal(str(menu_item.price)) * quantity
+                if not menu_item.is_available:
+                    return Response({"detail": f"Item '{menu_item.title}' is currently unavailable."}, status=status.HTTP_400_BAD_REQUEST)
+                quantity = entry['quantity']
+                prepared_items.append((menu_item, menu_item.title, menu_item.price, quantity))
+                subtotal += Decimal(str(menu_item.price)) * quantity
         else:
             cart_items = Cart.objects.filter(user=request.user).select_related('menu_item', 'restaurant')
             if not cart_items.exists():
                 return Response({
                     "detail": "Your cart is empty. Add items before placing an order."
                 }, status=status.HTTP_400_BAD_REQUEST)
+
+            for cart_item in cart_items:
+                if not cart_item.menu_item.is_available:
+                    return Response({
+                        "detail": f"Item '{cart_item.menu_item.title}' in your cart is currently unavailable."
+                    }, status=status.HTTP_400_BAD_REQUEST)
 
             restaurant = cart_items.first().restaurant
             prepared_items = [
@@ -411,7 +444,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         ]
         OrderItem.objects.bulk_create(order_items)
 
-        Restaurant.objects.filter(id=restaurant.id).update(order_count=restaurant.order_count + 1)
+        Restaurant.objects.filter(id=restaurant.id).update(order_count=F('order_count') + 1)
         if not request.user.default_address:
             request.user.default_address = delivery_address
             request.user.save(update_fields=['default_address'])
@@ -474,6 +507,12 @@ class RazorpayCreateOrderView(APIView):
         except Order.DoesNotExist:
             return Response({"detail": "Order not found."}, status=status.HTTP_404_NOT_FOUND)
 
+        if order.payment_status == 'PAID':
+            return Response({"detail": "This order is already paid."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if order.order_status == 'CANCELLED':
+            return Response({"detail": "Cannot process payment for a cancelled order."}, status=status.HTTP_400_BAD_REQUEST)
+
         if not order.razorpay_order_id:
             order.razorpay_order_id = f"order_rzp_{uuid.uuid4().hex[:14]}"
             order.save(update_fields=['razorpay_order_id'])
@@ -481,7 +520,7 @@ class RazorpayCreateOrderView(APIView):
         amount_in_paise = int(order.grand_total * 100)
 
         return Response({
-            "key_id": "rzp_test_zomatoCloneDemoKey",
+            "key_id": getattr(settings, 'RAZORPAY_KEY_ID', 'rzp_test_zomatoCloneDemoKey'),
             "razorpay_order_id": order.razorpay_order_id,
             "amount": amount_in_paise,
             "currency": "INR",
@@ -509,6 +548,13 @@ class RazorpayVerifyPaymentView(APIView):
             order = Order.objects.get(id=order_id, user=request.user)
         except Order.DoesNotExist:
             return Response({"detail": "Order not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if order.payment_status == 'PAID':
+            return Response({
+                "success": True,
+                "message": "Order is already paid.",
+                "order": OrderSerializer(order).data
+            })
 
         order.payment_status = 'PAID'
         order.transaction_id = razorpay_payment_id

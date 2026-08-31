@@ -8,8 +8,9 @@ export const useAuthStore = defineStore('auth', () => {
   const isLoading = ref(false)
   const error = ref(null)
   const isAuthModalOpen = ref(false)
-  const authStep = ref('mobile') // 'mobile' | 'otp'
+  const authStep = ref('mobile')
   const activeMobile = ref('')
+  const lastDebugOtp = ref('')
 
   const isAuthenticated = computed(() => !!token.value)
 
@@ -38,6 +39,7 @@ export const useAuthStore = defineStore('auth', () => {
     isAuthModalOpen.value = false
     authStep.value = 'mobile'
     error.value = null
+    lastDebugOtp.value = ''
   }
 
   async function sendOtp(mobile) {
@@ -47,6 +49,9 @@ export const useAuthStore = defineStore('auth', () => {
       const response = await api.post('/auth/send-otp/', { mobile })
       activeMobile.value = mobile
       authStep.value = 'otp'
+      if (response.data.debug_otp) {
+        lastDebugOtp.value = response.data.debug_otp
+      }
       return response.data
     } catch (err) {
       error.value = err.response?.data?.detail || err.response?.data?.mobile?.[0] || 'Failed to send OTP.'
@@ -95,6 +100,7 @@ export const useAuthStore = defineStore('auth', () => {
     isAuthModalOpen,
     authStep,
     activeMobile,
+    lastDebugOtp,
     isAuthenticated,
     loadUserFromStorage,
     openAuthModal,

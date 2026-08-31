@@ -17,7 +17,7 @@ function handleSendOtp() {
     return
   }
   authStore.sendOtp(cleaned).catch(() => {
-    // Error is set in store
+    // Error is handled in store
   })
 }
 
@@ -29,7 +29,7 @@ function handleVerifyOtp() {
     return
   }
   authStore.verifyOtp(authStore.activeMobile, cleanedOtp, fullName.value.trim()).catch(() => {
-    // Error is set in store
+    // Error is handled in store
   })
 }
 
@@ -134,8 +134,8 @@ function handleClose() {
           {{ localError || authStore.error }}
         </div>
 
-        <div class="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-xs">
-          💡 Development Code: <span class="font-bold">123456</span>
+        <div v-if="authStore.lastDebugOtp" class="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-xs">
+          💡 Development Code: <span class="font-bold tracking-wider">{{ authStore.lastDebugOtp }}</span> (check server logs in production)
         </div>
 
         <form @submit.prevent="handleVerifyOtp" class="space-y-4">

@@ -1,7 +1,9 @@
 from decimal import Decimal
+from datetime import timedelta
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
 from django.conf import settings
+from django.utils import timezone
 
 
 class UserManager(BaseUserManager):
@@ -52,6 +54,9 @@ class OTPVerification(models.Model):
     otp = models.CharField(max_length=6)
     created_at = models.DateTimeField(auto_now_add=True)
     is_verified = models.BooleanField(default=False)
+
+    def is_expired(self, expiry_minutes=5):
+        return timezone.now() > self.created_at + timedelta(minutes=expiry_minutes)
 
     def __str__(self):
         return f"{self.mobile} - {self.otp}"
