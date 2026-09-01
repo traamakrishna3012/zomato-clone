@@ -433,11 +433,27 @@ class Command(BaseCommand):
         demo_user, _ = User.objects.get_or_create(
             mobile="9876543210",
             defaults={
-                "full_name": "Aman Sharma",
-                "email": "aman@example.com",
+                                "full_name": "Zomato User",
+                "email": "zomato@example.com",
                 "default_address": "Flat 402, Sunshine Heights, Indore",
             }
         )
+        
+        # Check if admin superuser exists
+        admin_user, created = User.objects.get_or_create(
+            mobile="9999999999",
+            defaults={
+                "full_name": "Admin User",
+                "email": "admin@zomato-clone.local",
+                "is_staff": True,
+                "is_superuser": True,
+            }
+        )
+        if created or not admin_user.has_usable_password():
+            admin_user.set_password("admin123")
+            admin_user.is_staff = True
+            admin_user.is_superuser = True
+            admin_user.save()
 
         restaurant_count = 0
         menu_item_count = 0
